@@ -81,7 +81,7 @@ def status():
         return False
     print(f"HUD is running on 127.0.0.1:{common.PORT}, {len(rows)} session(s)")
     for r in rows:
-        print(f'  {r["project"]} — {r["action"] or r["status"]}')
+        print(f'  {r["title"]} — {r["action"] or r["status"]}')
     return True
 
 

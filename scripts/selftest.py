@@ -65,11 +65,12 @@ def up():
         ("UserPromptSubmit", {"prompt": "hi"}, "Thinking", ""),
         ("PreToolUse", BASH, "Running Tool", "Running: npm test"),
         ("PostToolUse", BASH, "Thinking", ""),
-        ("Stop", {}, "Idle", ""),
+        ("Stop", {}, "Done", ""),
+        ("Notification", {"message": "Claude is waiting for your input"}, "Done", ""),
     ]:
         code, out, dt = hook(event, **extra)
         s = session()
-        check(f"{event} -> {status}", code == 0 and out == "" and s["project"] == "my-app"
+        check(f"{event} -> {status}", code == 0 and out == "" and s["title"] == "my-app"
               and s["status"] == status and s["action"] == action,
               f'{s["project"]} — {s["action"] or s["status"]}, hook {dt:.2f}s')
     # what the AI is doing: tool line + Claude's latest message from a fake transcript
@@ -80,13 +81,16 @@ def up():
                              ("assistant", [{"type": "text", "text": "Fixing the parser now."},
                                             {"type": "tool_use", "name": "Edit"}])]:
             f.write(json.dumps({"type": typ, "message": {"content": content}}) + "\n")
+        f.write(json.dumps({"type": "ai-title", "aiTitle": "Fix parser bug"}) + "\n")
     hook("PreToolUse", tool_name="Edit", tool_input={"file_path": "C:/fake/my-app/src/parser.py"},
          transcript_path=f.name)
     s = session()
     os.unlink(f.name)
-    check("tool line and Claude's message are shown",
-          s["action"] == "Editing parser.py" and s["note"] == "Fixing the parser now.",
-          f'{s["action"]} / {s["note"]}')
+    check("session title, tool line and Claude's message are shown",
+          s["title"] == "Fix parser bug" and s["action"] == "Editing parser.py"
+          and s["note"] == "Fixing the parser now.", f'{s["title"]} / {s["action"]} / {s["note"]}')
+    hook("UserPromptSubmit", prompt="hi", session_title="My own name")
+    check("a title the user set wins", session()["title"] == "My own name")
     common.call("/dismiss", {"id": SID})  # same dismiss() the row's remove button calls
     check("remove hides the session", session() is None)
     hook("PostToolUse", **BASH)

@@ -33,9 +33,10 @@ Hooks load at session start, so sessions already open need a restart.
 
 ## Behaviour
 
-- Row per session: dot (green working, amber needs approval, gray idle) and
-  the folder name, then what the session is doing (`Running: npm test`,
-  `Editing app.py`, `Thinking`), then Claude's latest message in that turn,
+- Row per session: dot (green working, amber needs approval, red done, gray
+  idle) and the session's name (its title, else the folder name), then what the session is doing (`Running: npm test`,
+  `Editing app.py`, `Thinking`, `Done` once the turn ends; `Idle` only before
+  the first prompt), then Claude's latest message in that turn,
   read from the session transcript. Dimmed after 5 minutes idle, removed after 30 or on exit.
 - A permission request shows the tool and command with Approve / Deny. The
   click releases the waiting `PermissionRequest` hook at once.

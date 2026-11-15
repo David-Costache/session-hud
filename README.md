@@ -36,7 +36,10 @@ It is a Claude Code skill: one folder, Python standard library only, no build st
 ## What you get
 
 - **One row per session**, across every terminal, VS Code window and project.
-- **A status dot**: green while working, amber when it needs your approval, gray when idle.
+- **The session's own name** on each row (the title Claude Code gives it, or the
+  one you set), so two sessions in the same folder are easy to tell apart.
+- **A status dot**: green while working, amber when it needs your approval, red
+  when it has finished and is waiting for you, gray before the first prompt.
 - **What the AI is doing**, in plain words: `Running: npm test`, `Editing Hero.tsx`,
   `Searching for TODO`, `Thinking`, plus Claude's latest message in that turn.
 - **Approve / Deny buttons** with the exact command, right in the window. The click
@@ -99,7 +102,9 @@ tells it which command to run.
 
 Each row has up to three lines:
 
-1. **Folder name** of the session's working directory.
+1. **Session name.** A title you gave the session wins; otherwise the title Claude
+   Code generated for it (read from the transcript); otherwise the folder name of
+   its working directory, which is what a brand-new session shows until it has a title.
 2. **Current activity**, built from the tool call in progress:
 
    | Tool | Shown as |
@@ -116,7 +121,8 @@ Each row has up to three lines:
    | MCP tools | `Calling <server>: <tool>` |
    | anything else | `Running: <tool> <main input>` |
 
-   Between tool calls the line reads `Thinking`. When the turn ends it reads `Idle`.
+   Between tool calls the line reads `Thinking`. When the turn ends it reads `Done`.
+   `Idle` appears only for a session that has not had its first prompt yet.
 3. **Claude's latest message** in the current turn, in quotes, shown only while the
    session is working. It is read from the tail of the session transcript each time
    a tool starts or finishes.
@@ -128,7 +134,8 @@ Status and colour:
 | Thinking | green | you sent a prompt, or a tool just finished |
 | Running Tool | green | a tool call started |
 | Waiting for Approval | amber | a permission request is open |
-| Idle | gray | the turn ended, or the session just started |
+| Done | red | the turn ended |
+| Idle | gray | the session started and has no prompt yet |
 
 Ageing:
 
@@ -200,8 +207,8 @@ Hook events used:
 | `PreToolUse` | Running Tool, activity line, latest message | no (async) |
 | `PermissionRequest` | Waiting for Approval, card with buttons | **yes**, until click, timeout or fallback |
 | `PostToolUse` | Thinking, latest message refreshed | no (async) |
-| `Notification` | Idle with the message, or "Answer in the terminal" for permission notices | no (async) |
-| `Stop` | Idle | no (async) |
+| `Notification` | "Answer in the terminal" for permission notices; others are ignored | no (async) |
+| `Stop` | Done, session title refreshed | no (async) |
 | `SessionEnd` | Row removed | no |
 
 The approval round trip:
@@ -318,7 +325,7 @@ All requests need the `X-Token` header. Bodies and replies are JSON.
 | Method and path | Body | Reply |
 |---|---|---|
 | `POST /event` | a Claude Code hook payload | `{}`; for `PermissionRequest`, `{"decision": "allow" \| "deny" \| null}` once decided |
-| `GET /state` | none | `{"sessions": [{id, cwd, project, status, action, note, idle_s, pending}]}` (visible sessions only) |
+| `GET /state` | none | `{"sessions": [{id, cwd, project, title, status, action, note, idle_s, pending}]}` (visible sessions only) |
 | `POST /decide` | `{"id": "<approval id>", "decision": "allow" \| "deny"}` | `{"ok": true \| false}` |
 | `POST /dismiss` | `{"id": "<session id>"}` | `{"ok": true}` |
 | `POST /quit` | `{}` | `{"ok": true}`, then the HUD exits |
@@ -335,8 +342,10 @@ python "$HOME\.claude\skills\session-hud\scripts\selftest.py" down   # HUD stopp
 
 The first run drives the real `hook.py` with simulated payloads for a fake session and checks:
 
-- each status change (Idle, Thinking, Running Tool, Thinking, Idle);
-- the activity line and Claude's message, using a temporary fake transcript;
+- each status change (Idle, Thinking, Running Tool, Thinking, Done), and that a
+  later "waiting for your input" notice leaves it at Done;
+- the session title, activity line and Claude's message, using a temporary fake
+  transcript, and that a title you set wins over the generated one;
 - remove hides a session, keeps it hidden while it works, and a permission request brings it back;
 - a blocked approval hook is released with the correct allow JSON, then the same for deny;
 - a wrong token gets HTTP 403;
@@ -385,8 +394,11 @@ to the file; delete them when you no longer need them.
 - **Thinking has no detail of its own.** Claude Code emits no hook while the model
   is generating, so between tool calls the HUD can only show "Thinking" and the
   last message it found.
-- **The quoted message depends on the transcript file format**, which is not a
-  documented contract. If it changes, that line disappears and nothing else breaks.
+- **The quoted message and the generated session title depend on the transcript
+  file format**, which is not a documented contract. If it changes, the message
+  line disappears and rows show the folder name; nothing else breaks.
+- **The screenshot above predates session titles and the red Done dot**: it shows
+  folder names, which is what sessions without a title look like.
 - **Subagent activity** appears under the parent session's row.
 - **No keyboard shortcuts**, no sound, no tray icon, no remembered position, no light theme.
 - **Primary monitor only** for the starting position.

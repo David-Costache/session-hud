@@ -65,12 +65,14 @@ def describe(tool, inp):
     return f"Running: {tool} {preview(inp)}".strip()
 
 
-def last_note(path):
-    """Claude's latest visible message in this turn, read from the session transcript.
+def read_transcript(path):
+    """(Claude's latest visible message in this turn, the session's title), from the transcript.
 
     Best effort: the transcript format is not a documented contract, so any
-    surprise returns "" and the row just shows the tool line.
+    surprise returns "" and the row falls back to the tool line / folder name.
     """
+    note = title = ""
+    note_done = False
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
@@ -81,20 +83,25 @@ def last_note(path):
                 d = json.loads(line)
             except ValueError:
                 continue  # the first line of the tail is usually cut in half
-            if d.get("isSidechain") or d.get("type") not in ("assistant", "user"):
+            if title and note_done:
+                break
+            if d.get("type") == "ai-title":
+                title = title or str(d.get("aiTitle") or "")
+            if note_done or d.get("isSidechain") or d.get("type") not in ("assistant", "user"):
                 continue
             content = d.get("message", {}).get("content")
             blocks = content if isinstance(content, list) else []
             if d["type"] == "user":
-                if not any(b.get("type") == "tool_result" for b in blocks):
-                    return ""  # reached the prompt that started this turn
+                # a user line without tool results is the prompt that started this turn
+                note_done = not any(b.get("type") == "tool_result" for b in blocks)
                 continue
             for b in reversed(blocks):
                 if b.get("type") == "text" and b.get("text", "").strip():
-                    return b["text"].strip()
+                    note, note_done = b["text"].strip(), True
+                    break
     except Exception:
         pass
-    return ""
+    return note, title
 
 
 def decide(pid, decision):
@@ -134,6 +141,7 @@ def snapshot():  # caller holds lock
         pend = [{"id": k, "tool": p["tool"], "preview": p["preview"]}
                 for k, p in pending.items() if p["sid"] == sid and not p["ev"].is_set()]
         rows.append({"id": sid, "cwd": s["cwd"], "project": s["project"],
+                     "title": s.get("title") or s["project"],
                      "status": WAITING if pend else s["status"], "action": s["action"],
                      "note": s.get("note", ""),
                      "idle_s": int(now - s["last"]), "pending": pend})
@@ -144,7 +152,10 @@ def handle_event(d, sock):
     ev, sid = d["hook_event_name"], d["session_id"]
     tool, pv = d.get("tool_name", ""), preview(d.get("tool_input"))
     doing = describe(tool, d.get("tool_input"))
-    note = last_note(d.get("transcript_path")) if ev in ("PreToolUse", "PostToolUse") else ""
+    note = title = ""
+    if ev in ("PreToolUse", "PostToolUse", "Stop"):
+        note, title = read_transcript(d.get("transcript_path"))
+    title = d.get("session_title") or title  # a name the user gave wins over the generated one
     with lock:
         if ev == "SessionEnd":
             sessions.pop(sid, None)
@@ -156,6 +167,8 @@ def handle_event(d, sock):
         s["cwd"] = d.get("cwd") or s["cwd"]
         s["project"] = os.path.basename(s["cwd"].rstrip("/\\")) or "?"
         s["last"] = time.time()
+        if title:
+            s["title"] = str(title)
         if ev == "PermissionRequest":
             hidden.discard(sid)
             pid = uuid.uuid4().hex
@@ -171,10 +184,10 @@ def handle_event(d, sock):
             msg = str(d.get("message", ""))
             if "permission" in msg.lower():
                 s["status"], s["action"] = WAITING, "Answer in the terminal"
-            else:
-                s["status"], s["action"] = "Idle", msg
-        elif ev in ("Stop", "SessionStart"):
-            s["status"], s["action"] = "Idle", ""
+        elif ev == "Stop":
+            s["status"], s["action"] = "Done", ""
+        elif ev == "SessionStart" and d.get("source") in (None, "startup", "clear"):
+            s["status"], s["action"] = "Idle", ""  # Idle only until the first prompt
         if ev in ("Stop", "UserPromptSubmit"):
             cancel(sid)  # the turn moved on, so any approval still shown is stale
         dirty.set()
@@ -266,12 +279,14 @@ class Server(ThreadingHTTPServer):
 
 BG, CARD, CODE, LINE, BORDER = "#17171b", "#222229", "#131316", "#26262d", "#34343d"
 FG, MUTED, FAINT = "#ececf1", "#9a9aa6", "#5f5f6b"
-COLORS = {"wait": "#fbbf24", "work": "#4ade80", "idle": "#6b7280"}
+COLORS = {"wait": "#fbbf24", "work": "#4ade80", "done": "#f87171", "idle": "#6b7280"}
 UI, BOLD, MONO = "Segoe UI", "Segoe UI Semibold", "Consolas"
 
 
 def kind(status):
-    return "wait" if status == WAITING else "work" if status in ("Thinking", "Running Tool") else "idle"
+    if status in ("Thinking", "Running Tool"):
+        return "work"
+    return {WAITING: "wait", "Done": "done"}.get(status, "idle")
 
 
 def clip(text, n):
@@ -370,7 +385,7 @@ class Hud:
                     hidden.discard(sid)
             rows = snapshot()
         kinds = [kind(r["status"]) for r in rows]
-        overall = next((k for k in ("wait", "work") if k in kinds), "idle")
+        overall = next((k for k in ("wait", "work", "done") if k in kinds), "idle")
         if any(r["pending"] for r in rows):
             self.collapsed = False  # pop open whenever an approval is waiting
         for w in self.body.winfo_children():
@@ -410,7 +425,7 @@ class Hud:
                                      "#ff7b72").pack(side="right", anchor="n")
                 text = tk.Frame(row, bg=BG)
                 text.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
-                tk.Label(text, text=clip(r["project"], 34), fg=MUTED if dim else FG, bg=BG,
+                tk.Label(text, text=clip(r["title"], 34), fg=MUTED if dim else FG, bg=BG,
                          font=(BOLD, 10), anchor="w").pack(fill="x")
                 tk.Label(text, text=clip(r["action"] or r["status"], 44),
                          fg=FAINT if dim else COLORS["wait"] if r["pending"] else MUTED, bg=BG,
