@@ -424,6 +424,7 @@ It is the simplest thing the standard library supports on Windows.
 session-hud/
 ├── SKILL.md            what Claude reads to operate the HUD
 ├── README.md
+├── LICENSE
 ├── docs/screenshot.png
 └── scripts/
     ├── hud.py          daemon + window
@@ -448,5 +449,4 @@ and for the launcher in `ctl.py`.
 
 ## License
 
-No license has been chosen yet. Until one is added, the default copyright rules
-apply: you may read the code, but reuse is not granted.
+[MIT](LICENSE). Use it, change it and share it freely; keep the copyright notice.
