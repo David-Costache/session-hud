@@ -1,0 +1,4 @@
+# per-machine secret and runtime files
+token
+hud.log
+__pycache__/
